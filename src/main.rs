@@ -1,47 +1,93 @@
+use std::os::fd;
+use std::env;
+use std::net::Ipv4Addr;
+
 use nix::sys::socket;
 use nix::sys::socket::AddressFamily;
 use nix::sys::socket::SockType;
 use nix::sys::socket::SockFlag;
 use nix::sys::socket::SockProtocol;
 
-use std::os::fd;
-use std::os::fd::AsRawFd;
-use std::io::Write;
+use internet_checksum::checksum;
 
-fn main() {
+// Traits
+use std::os::fd::AsRawFd;
+
+fn get_address() -> Result<socket::SockaddrIn, String> {
+    let mut args = env::args();
+    let executable_name = args.next().unwrap();
+    let addr = args.next().ok_or_else(|| {
+        println!("Usage: {} <ipv4-address>", executable_name);
+        String::from("Not enough arguments!")
+    })?;
+
+    if let Some(_) = args.next() {
+        println!("Usage: {} <ipv4-address>", executable_name);
+        return Err(String::from("Too many arguments!"));
+    }
+    let ip4address: Ipv4Addr = addr.parse().map_err(|e| {
+        println!("{}", e);
+        format!("Unable to parse {} as an IPv4 address!", addr)
+    })?;
+
+    let octets = ip4address.octets();
+    return Ok(socket::SockaddrIn::new(octets[0], octets[1], octets[2], octets[3], 0));
+}
+
+fn ping() -> Result<(), String> {
+    let address = get_address()?;
     let sock: fd::OwnedFd = socket::socket(
         AddressFamily::Inet,
         SockType::Raw,
         SockFlag::empty(),
         SockProtocol::Icmp
-    ).expect("Unable to create a socket!");
+    ).map_err(|e| { format!("{} - Unable to create socket!", e) })?;
 
     let mut buf: Vec<u8> = Vec::new();
-    buf.push(0x08); // Type = 0x08 for echo request
-    buf.push(0x00); // Code = 0x00 for echo request
-    buf.push(0xf7); buf.push(0xfd); // Add 2 octets checksum
-    buf.push(0x00); buf.push(0x01); // Zero identifier
-    buf.push(0x00); buf.push(0x01); // Zero sequence number
+    buf.resize(8, 0);
+    buf[0] = 0x08; // Type = 0x08 for echo request
+    buf[7] = 0x01; // Set sequence number to 1
 
-    let _sent_bytes = socket::sendto(
+    // Compute and set checksum
+    let checksum = checksum(buf.as_slice());
+    buf[2..4].copy_from_slice(&checksum);
+
+    socket::sendto(
         sock.as_raw_fd(),
         buf.as_slice(),
-        &socket::SockaddrIn::new(10, 0, 0, 1, 0),
+        &address,
         socket::MsgFlags::empty()
-    ).expect("Unable to send message!");
-
-    // println!("Message of {} bytes sent, I guess!", sent_bytes);
+    ).map_err(|e| { format!("{} - Unable to send ICMP message!", e) })?;
 
     buf.clear();
-    buf.resize(28, 0);
+    buf.resize(1024, 0);
 
-    let recv_result: nix::Result<(usize, Option<socket::SockaddrIn>)> =
-        socket::recvfrom(sock.as_raw_fd(), buf.as_mut_slice());
+    let (recv_bytes, sender_addr): (usize, Option<socket::SockaddrIn>) =
+        socket::recvfrom(sock.as_raw_fd(), buf.as_mut_slice())
+        .map_err(|e| { format!("{} - Error trying to receive ICMP response!", e) })?;
 
-    let (_recv_bytes, _) = recv_result.expect("Error receiving response!");
+    if recv_bytes >= 1024 {
+        panic!("Buffer full when receiving!");
+    }
 
-    // println!("Message of {} bytes received, I guess!", recv_bytes);
-    let mut out = std::io::stdout();
-    out.write_all(buf.as_slice()).unwrap();
-    out.flush().unwrap();
+    // Consume IPv4 header first
+    let ip4_header_size = ((buf[0] & 0x0F) as usize) * 4;
+    let response = &buf[ip4_header_size..];
+
+    let responder = sender_addr
+        .map(|sock_add| sock_add.ip().to_string())
+        .unwrap_or(String::from("unknown"));
+
+    if response[0] == 0 {
+        println!("ICMP echo response received from address {}", responder);
+        Ok(())
+    } else {
+        Err(format!("Unexpected type code {} for ICMP response!", response[0]))
+    }
+}
+
+fn main() {
+    if let Err(e) = ping() {
+        println!("{}", e);
+    }
 }

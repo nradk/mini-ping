@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 checksum = "0.2.1"
+internet-checksum = "0.2.1"
 nix = { version = "0.30.1", features = ["net", "socket"] }
