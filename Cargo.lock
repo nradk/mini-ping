@@ -54,6 +54,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mini-ping"
+version = "0.1.0"
+dependencies = [
+ "checksum",
+ "internet-checksum",
+ "nix",
+]
+
+[[package]]
 name = "nix"
 version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -64,13 +73,4 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "memoffset",
-]
-
-[[package]]
-name = "ping"
-version = "0.1.0"
-dependencies = [
- "checksum",
- "internet-checksum",
- "nix",
 ]
