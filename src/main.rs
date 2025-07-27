@@ -43,10 +43,7 @@ fn get_address(args: &mut Args) -> Result<socket::SockaddrIn, String> {
 fn ping() -> Result<(), String> {
     let address = get_address(&mut env::args())?;
     let sock: fd::OwnedFd = socket::socket(
-        AddressFamily::Inet,
-        SockType::Raw,
-        SockFlag::empty(),
-        SockProtocol::Icmp
+        AddressFamily::Inet, SockType::Raw, SockFlag::empty(), SockProtocol::Icmp
     ).map_err(|e| { format!("{} - Unable to create socket!", e) })?;
 
     // Create ICMP echo request (type 8, code 0), id 0, sequence 1
@@ -86,7 +83,7 @@ fn ping() -> Result<(), String> {
         .map(|sock_add| sock_add.ip().to_string())
         .unwrap_or(String::from("unknown"));
 
-    if response[0] == 0 && response[1] == 0 {
+    if response[0] == 0 || (response[0] == 8 && address.ip().is_loopback()) {
         println!("From {}: Echo response in {:.3} ms", responder,
             elapsed_duration.as_micros() as f64 / 1000 as f64);
     } else if response[0] == 3 && response[1] < 16 {
