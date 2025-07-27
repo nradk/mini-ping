@@ -1,6 +1,8 @@
 use std::os::fd;
 use std::env;
+use std::env::Args;
 use std::net::Ipv4Addr;
+use std::time::SystemTime;
 
 use nix::sys::socket;
 use nix::sys::socket::AddressFamily;
@@ -13,8 +15,7 @@ use internet_checksum::checksum;
 // Traits
 use std::os::fd::AsRawFd;
 
-fn get_address() -> Result<socket::SockaddrIn, String> {
-    let mut args = env::args();
+fn get_address(args: &mut Args) -> Result<socket::SockaddrIn, String> {
     let executable_name = args.next().unwrap();
     let addr = args.next().ok_or_else(|| {
         println!("Usage: {} <ipv4-address>", executable_name);
@@ -35,7 +36,7 @@ fn get_address() -> Result<socket::SockaddrIn, String> {
 }
 
 fn ping() -> Result<(), String> {
-    let address = get_address()?;
+    let address = get_address(&mut env::args())?;
     let sock: fd::OwnedFd = socket::socket(
         AddressFamily::Inet,
         SockType::Raw,
@@ -52,6 +53,9 @@ fn ping() -> Result<(), String> {
     let checksum = checksum(buf.as_slice());
     buf[2..4].copy_from_slice(&checksum);
 
+    println!("PING {}", address.ip().to_string());
+    let start_time = SystemTime::now();
+
     socket::sendto(
         sock.as_raw_fd(),
         buf.as_slice(),
@@ -66,6 +70,11 @@ fn ping() -> Result<(), String> {
         socket::recvfrom(sock.as_raw_fd(), buf.as_mut_slice())
         .map_err(|e| { format!("{} - Error trying to receive ICMP response!", e) })?;
 
+    let end_time = SystemTime::now();
+    let elapsed_duration = end_time
+        .duration_since(start_time)
+        .map_err(|e| format!("{} - Unable to compute elapsed time!", e))?;
+
     if recv_bytes >= 1024 {
         panic!("Buffer full when receiving!");
     }
@@ -78,16 +87,19 @@ fn ping() -> Result<(), String> {
         .map(|sock_add| sock_add.ip().to_string())
         .unwrap_or(String::from("unknown"));
 
+
     if response[0] == 0 {
-        println!("ICMP echo response received from address {}", responder);
+        println!("ICMP echo response received from address {} in {:.3} ms", responder,
+            elapsed_duration.as_micros() as f64 / 1000 as f64);
         Ok(())
     } else {
-        Err(format!("Unexpected type code {} for ICMP response!", response[0]))
+        Err(format!("Unexpected type {} (with code {}) for ICMP response!", response[0], response[1]))
     }
 }
 
 fn main() {
     if let Err(e) = ping() {
         println!("{}", e);
+        std::process::exit(1);
     }
 }
